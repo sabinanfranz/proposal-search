@@ -137,16 +137,17 @@ async def slack_events(request: Request):
     # 요청 본문 읽기
     body = await request.body()
 
-    # 서명 검증
-    if not verify_slack_signature(request, body):
-        raise HTTPException(status_code=403, detail="Invalid signature")
-
     # JSON 파싱
-    data = await request.json()
+    import json
+    data = json.loads(body)
 
-    # URL 검증 챌린지
+    # URL 검증 챌린지 (서명 검증 전에 처리)
     if data.get("type") == "url_verification":
         return {"challenge": data.get("challenge")}
+
+    # 서명 검증 (URL 검증 이외의 요청)
+    if not verify_slack_signature(request, body):
+        raise HTTPException(status_code=403, detail="Invalid signature")
 
     # 이벤트 처리
     if data.get("type") == "event_callback":
