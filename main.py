@@ -58,9 +58,9 @@ def query_proposal_store(question: str) -> tuple[str, list]:
             config=types.GenerateContentConfig(
                 tools=[
                     types.Tool(
-                        file_search=types.FileSearch(
-                            file_search_store_names=[config.FILE_SEARCH_STORE_NAME]
-                        )
+                        retrieval={
+                            "file_search_store_names": [config.FILE_SEARCH_STORE_NAME]
+                        }
                     )
                 ]
             )
