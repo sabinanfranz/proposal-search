@@ -221,7 +221,7 @@ async def slack_events(request: Request):
 @app.get("/")
 async def root():
     """헬스체크 엔드포인트"""
-    return {"status": "healthy", "service": "Day1 Proposal Bot"}
+    return {"status": "healthy", "service": "B2B Research Bot"}
 
 
 @app.get("/health")
