@@ -58,10 +58,8 @@ def query_proposal_store(question: str) -> tuple[str, list]:
             config=types.GenerateContentConfig(
                 tools=[
                     types.Tool(
-                        retrieval=types.Retrieval(
-                            vertex_ai_search=types.VertexAISearch(
-                                datastore=config.FILE_SEARCH_STORE_NAME
-                            )
+                        file_search=types.FileSearch(
+                            file_search_store_names=[config.FILE_SEARCH_STORE_NAME]
                         )
                     )
                 ]
