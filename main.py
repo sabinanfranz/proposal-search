@@ -4,11 +4,15 @@ from slack_sdk.errors import SlackApiError
 import hmac
 import hashlib
 import time
+import re
 from google import genai
 from google.genai import types
 import config
 
 app = FastAPI()
+
+# 허용된 채널 ID
+ALLOWED_CHANNEL = "C09U32WRJEN"
 
 # Slack 클라이언트 초기화
 slack_client = WebClient(token=config.SLACK_BOT_TOKEN)
@@ -119,21 +123,11 @@ def format_slack_message(answer: str, sources: list, question: str) -> dict:
     return {"blocks": blocks}
 
 
-def should_respond_to_message(event: dict) -> bool:
-    """메시지에 응답해야 하는지 판단"""
-    text = event.get("text", "").lower()
-    channel = event.get("channel", "")
-
-    # 봇 자신의 메시지는 무시
-    if event.get("bot_id"):
-        return False
-
-    # 특정 채널 필터링
-    if config.AUTO_REPLY_CHANNELS and channel not in config.AUTO_REPLY_CHANNELS:
-        return False
-
-    # 키워드 체크
-    return any(keyword in text for keyword in config.BOT_TRIGGER_KEYWORDS)
+def extract_query_from_mention(text: str) -> str:
+    """멘션에서 쿼리 텍스트 추출 (봇 멘션 제거)"""
+    # <@U12345678> 형식의 멘션 제거
+    query = re.sub(r'<@[A-Z0-9]+>', '', text).strip()
+    return query
 
 
 @app.post("/slack/events")
@@ -164,56 +158,69 @@ async def slack_events(request: Request):
             return {"status": "ok"}
         processed_events.add(event_id)
 
-        # 메시지 이벤트만 처리
-        if event.get("type") == "message" and not event.get("subtype"):
+        # app_mention 이벤트 처리 (봇이 멘션되었을 때)
+        if event.get("type") == "app_mention":
+            channel = event.get("channel")
 
-            # 응답 조건 확인
-            if should_respond_to_message(event):
-                channel = event.get("channel")
-                thread_ts = event.get("thread_ts") or event.get("ts")
-                question = event.get("text")
+            # 허용된 채널에서만 응답
+            if channel != ALLOWED_CHANNEL:
+                return {"status": "ok"}
 
-                try:
-                    # "처리 중" 메시지 전송
-                    processing_msg = slack_client.chat_postMessage(
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        text="🤔 제안서를 검색하고 있습니다..."
-                    )
+            thread_ts = event.get("thread_ts") or event.get("ts")
+            text = event.get("text", "")
 
-                    # 제안서 스토어 쿼리
-                    answer, sources = query_proposal_store(question)
+            # 멘션에서 쿼리 추출
+            question = extract_query_from_mention(text)
 
-                    # 메시지 포맷팅
-                    formatted_msg = format_slack_message(answer, sources, question)
+            if not question:
+                slack_client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text="질문을 입력해주세요. 예: @B2B Research Bot 제안서에서 AI 관련 내용 찾아줘"
+                )
+                return {"status": "ok"}
 
-                    # "처리 중" 메시지 삭제
-                    slack_client.chat_delete(
-                        channel=channel,
-                        ts=processing_msg["ts"]
-                    )
+            try:
+                # "처리 중" 메시지 전송
+                processing_msg = slack_client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text="🤔 제안서를 검색하고 있습니다..."
+                )
 
-                    # 답변 전송
-                    slack_client.chat_postMessage(
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        **formatted_msg
-                    )
+                # 제안서 스토어 쿼리
+                answer, sources = query_proposal_store(question)
 
-                except SlackApiError as e:
-                    print(f"Slack API 오류: {e.response['error']}")
-                    slack_client.chat_postMessage(
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        text=f"❌ 오류가 발생했습니다: {e.response['error']}"
-                    )
-                except Exception as e:
-                    print(f"일반 오류: {str(e)}")
-                    slack_client.chat_postMessage(
-                        channel=channel,
-                        thread_ts=thread_ts,
-                        text=f"❌ 오류가 발생했습니다: {str(e)}"
-                    )
+                # 메시지 포맷팅
+                formatted_msg = format_slack_message(answer, sources, question)
+
+                # "처리 중" 메시지 삭제
+                slack_client.chat_delete(
+                    channel=channel,
+                    ts=processing_msg["ts"]
+                )
+
+                # 답변 전송 (스레드 댓글로)
+                slack_client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    **formatted_msg
+                )
+
+            except SlackApiError as e:
+                print(f"Slack API 오류: {e.response['error']}")
+                slack_client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=f"❌ 오류가 발생했습니다: {e.response['error']}"
+                )
+            except Exception as e:
+                print(f"일반 오류: {str(e)}")
+                slack_client.chat_postMessage(
+                    channel=channel,
+                    thread_ts=thread_ts,
+                    text=f"❌ 오류가 발생했습니다: {str(e)}"
+                )
 
     return {"status": "ok"}
 
