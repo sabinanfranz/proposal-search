@@ -10,8 +10,8 @@ import config
 
 app = FastAPI()
 
-# 허용된 채널 ID
-ALLOWED_CHANNEL = "C09U32WRJEN"
+# 허용된 채널 ID (여러 개 설정 가능)
+ALLOWED_CHANNELS = set(config.ALLOWED_CHANNELS)
 
 # 시스템 프롬프트
 SYSTEM_PROMPT = """
@@ -237,8 +237,8 @@ async def slack_events(request: Request):
         if event.get("type") == "app_mention":
             channel = event.get("channel")
 
-            # 허용된 채널에서만 응답
-            if channel != ALLOWED_CHANNEL:
+            # 허용된 채널에서만 응답 (설정이 없으면 모든 채널 허용)
+            if ALLOWED_CHANNELS and channel not in ALLOWED_CHANNELS:
                 return {"status": "ok"}
 
             thread_ts = event.get("thread_ts") or event.get("ts")
@@ -314,4 +314,4 @@ async def health():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host=config.HOST, port=config.PORT)
