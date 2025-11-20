@@ -653,15 +653,23 @@ def query_without_file_search(question: str) -> tuple[str, list]:
 
 def format_slack_message(answer: str, sources: list, question: str) -> dict:
     """Slack 메시지 포맷팅 (Block Kit 사용)"""
-    fallback_answer = answer.strip() or "내용이 없습니다."
-    fallback_text = f"질문: {question}\n답변: {fallback_answer}"
+    def _sanitize(text: str) -> str:
+        safe = str(text or "").strip()
+        if not safe:
+            return "내용이 없습니다."
+        return safe[:2900]
+
+    safe_question = _sanitize(question)
+    safe_answer = _sanitize(answer)
+    fallback_text = f"질문: {safe_question}\n답변: {safe_answer}"
+    fallback_text = fallback_text[:2900]
 
     blocks = [
         {
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*질문:* {question}"
+                "text": f"*질문:* {safe_question}"
             }
         },
         {
@@ -671,14 +679,15 @@ def format_slack_message(answer: str, sources: list, question: str) -> dict:
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": f"*답변:*\n{answer}"
+                "text": f"*답변:*\n{safe_answer}"
             }
         }
     ]
 
     # 참조 문서가 있으면 추가
     if sources:
-        source_text = "\n".join([f"• {source}" for source in sources[:5]])
+        clean_sources = [f"• {_sanitize(source)}" for source in sources[:5]]
+        source_text = "\n".join(clean_sources)
         blocks.append({
             "type": "section",
             "text": {
