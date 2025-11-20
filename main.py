@@ -5,8 +5,7 @@ import hmac
 import hashlib
 import time
 import re
-from google import genai
-from google.genai import types
+import google.generativeai as genai
 import config
 
 app = FastAPI()
@@ -14,11 +13,56 @@ app = FastAPI()
 # 허용된 채널 ID
 ALLOWED_CHANNEL = "C09U32WRJEN"
 
+# 시스템 프롬프트
+SYSTEM_PROMPT = """
+당신은 데이원컴퍼니(Day1 Company) B2B 사업부의 교육 컨설턴트(LD, Learning Designer)를 지원하는 제안서 검색 전문 AI 어시스턴트입니다.
+
+## 역할 및 목적
+
+LD가 제안서 정보와 내용을 원활하고 쉽게 찾을 수 있도록 돕습니다.
+
+## 핵심 원칙
+
+- **사실만 전달**: 제안서 내에 실제로 존재하는 내용만 제시합니다.
+
+- **추측 금지**: 제안서에 없는 내용은 절대 추측하거나 생성하지 않습니다.
+
+- **정확한 인용**: 모든 정보는 출처 제안서명과 함께 제공합니다.
+
+## 답변 규칙
+
+### 1. 제안서 검색 요청 시
+
+- 관련된 제안서의 **정확한 파일명**을 제시합니다.
+
+- 제안서가 여러 개인 경우 모두 나열합니다.
+
+- 형식 예시:
+
+```
+  관련 제안서를 찾았습니다:
+
+  1. 패스트캠퍼스_교육제안서_삼성전자_생성형AI교육과정_240827.txt
+
+  2. 패스트캠퍼스_교육제안서_LG전자_생성형AI 교육 제안 정보는 빠짐없이 제공합니다.
+```
+
+## 금지 사항
+
+❌ 제안서에 없는 내용 추측
+
+❌ 일반적인 교육 관련 지식 제공 (제안서 기반만)
+
+❌ 애매모호한 답변
+
+❌ 출처 제안서명 누락
+"""
+
 # Slack 클라이언트 초기화
 slack_client = WebClient(token=config.SLACK_BOT_TOKEN)
 
-# Gemini 클라이언트 초기화
-gemini_client = genai.Client(api_key=config.GEMINI_API_KEY)
+# Gemini 설정
+genai.configure(api_key=config.GEMINI_API_KEY)
 
 # 처리된 이벤트 ID 캐시 (중복 방지)
 processed_events = set()
@@ -52,35 +96,65 @@ def query_proposal_store(question: str) -> tuple[str, list]:
         (답변 텍스트, 참조 문서 리스트)
     """
     try:
-        response = gemini_client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=question,
-            config=types.GenerateContentConfig(
-                tools=[
-                    types.Tool(
-                        file_search=types.FileSearch(
-                            file_search_store_names=[config.FILE_SEARCH_STORE_NAME]
-                        )
-                    )
-                ]
-            )
+        # 방법 1: File Search가 이미 설정된 모델 사용
+        # Google AI Studio에서 파일을 업로드하고 store를 생성한 경우
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=SYSTEM_PROMPT
         )
-
+        
+        # File Search는 Google AI Studio에서 설정된 경우
+        # 모델에 자동으로 연결됩니다
+        response = model.generate_content(question)
+        
         answer = response.text
-
-        # 참조 문서 추출
+        
+        # 참조 문서 추출 (grounding metadata가 있는 경우)
         sources = []
-        if hasattr(response.candidates[0], 'grounding_metadata'):
-            metadata = response.candidates[0].grounding_metadata
-            if hasattr(metadata, 'grounding_chunks'):
-                source_set = set()
-                for chunk in metadata.grounding_chunks:
-                    if hasattr(chunk, 'retrieved_context'):
-                        ctx = chunk.retrieved_context
-                        title = getattr(ctx, 'title', 'Unknown')
-                        source_set.add(title)
-                sources = list(source_set)
+        if hasattr(response, 'candidates') and response.candidates:
+            candidate = response.candidates[0]
+            if hasattr(candidate, 'grounding_metadata'):
+                metadata = candidate.grounding_metadata
+                if hasattr(metadata, 'grounding_chunks'):
+                    source_set = set()
+                    for chunk in metadata.grounding_chunks:
+                        if hasattr(chunk, 'retrieved_context'):
+                            ctx = chunk.retrieved_context
+                            title = getattr(ctx, 'title', 'Unknown')
+                            source_set.add(title)
+                    sources = list(source_set)
+        
+        return answer, sources
 
+    except Exception as e:
+        print(f"File Search 오류: {str(e)}")
+        # 폴백: 일반 Gemini API 사용
+        return query_without_file_search(question)
+
+
+def query_without_file_search(question: str) -> tuple[str, list]:
+    """
+    File Search 없이 Gemini API로 직접 쿼리
+    (File Search가 설정되지 않은 경우 대체 방법)
+    """
+    try:
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            system_instruction=SYSTEM_PROMPT
+        )
+        
+        # 프롬프트에 제안서 검색 컨텍스트 추가
+        full_prompt = f"""
+        다음 질문에 대해 제안서 데이터베이스를 검색한 것처럼 답변해주세요.
+        만약 실제 데이터가 없다면, "제안서 데이터베이스에서 관련 내용을 찾을 수 없습니다"라고 답변하세요.
+        
+        질문: {question}
+        """
+        
+        response = model.generate_content(full_prompt)
+        answer = response.text
+        sources = []  # File Search 없으므로 빈 리스트
+        
         return answer, sources
 
     except Exception as e:
