@@ -99,7 +99,7 @@ def query_proposal_store(question: str) -> tuple[str, list]:
         # 방법 1: File Search가 이미 설정된 모델 사용
         # Google AI Studio에서 파일을 업로드하고 store를 생성한 경우
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.5-flash",
             system_instruction=SYSTEM_PROMPT
         )
         
@@ -139,7 +139,7 @@ def query_without_file_search(question: str) -> tuple[str, list]:
     """
     try:
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.5-flash",
             system_instruction=SYSTEM_PROMPT
         )
         
