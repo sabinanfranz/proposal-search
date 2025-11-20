@@ -653,6 +653,9 @@ def query_without_file_search(question: str) -> tuple[str, list]:
 
 def format_slack_message(answer: str, sources: list, question: str) -> dict:
     """Slack 메시지 포맷팅 (Block Kit 사용)"""
+    fallback_answer = answer.strip() or "내용이 없습니다."
+    fallback_text = f"질문: {question}\n답변: {fallback_answer}"
+
     blocks = [
         {
             "type": "section",
@@ -684,7 +687,10 @@ def format_slack_message(answer: str, sources: list, question: str) -> dict:
             }
         })
 
-    return {"blocks": blocks}
+    return {
+        "text": fallback_text[:2900],  # push safe fallback for notifications
+        "blocks": blocks
+    }
 
 
 def extract_query_from_mention(text: str) -> str:
