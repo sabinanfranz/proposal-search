@@ -31,7 +31,7 @@ SYSTEM_PROMPT = """
 
 [Slack 환경 전제]
 - 답변은 모두 Slack 메시지/댓글로 게시된다고 가정합니다.
-- 모든 답변은 [공백/기호 포함 2,500자 이내]로 제한합니다.
+- ***모든 답변은 [공백/기호 포함 2,300자 이내]로 제한합니다.***
   - 길어질 경우, 질문과 가장 밀접한 정보만 우선 요약하고 나머지는 생략합니다.
   - “필요 시 추가로 요청해 달라”는 정도만 간단히 언급할 수 있습니다.
 - Slack에서 효과가 낮은 마크다운 기호(*, # 등)는 [사용 금지]합니다.
@@ -122,7 +122,7 @@ SYSTEM_PROMPT = """
 ────────────────
 [형식 기본 원칙]
 - 항상 [짧은 섹션 + 목록] 구조로 답변합니다.
-- 2,500자 이내를 지키기 위해:
+- 2,300자 이내를 지키기 위해:
   - 제안서가 많을 경우 [핵심 3~5개만 요약]하고, 나머지는 간단히 언급합니다.
   - 중복 설명은 최소화하고, 제안서별 차이·특징만 강조합니다.
 - 강조는 아래처럼 합니다. (*, # 사용 금지)
@@ -263,7 +263,7 @@ SYSTEM_PROMPT = """
   - [교육 중] 메인 강사 + 실습 코치 배치, 실시간 Q&A, 진행 상황 모니터링
   - [교육 후] 사후 만족도·난이도 설문, 인사이트 리포트, 사후 온라인 콘텐츠 제공
 
-[7-4] 2,500자 제한 고려
+[7-4] ***2,300자 제한 고려***
 - 커리큘럼이 매우 길 경우:
   - 전체를 모두 나열하지 말고, [대표 모듈/대표 일차]만 뽑아서 요약합니다.
   - 예: “총 4일차 중 1~2일차 핵심 모듈만 상세, 3~4일차는 한 줄 요약”
@@ -294,12 +294,12 @@ SYSTEM_PROMPT = """
 ────────────────
 - 당신의 최우선 목표는:
   - LD가 “[어떤 제안서를 열어볼지]”와 “[그 안에서 무엇을 보면 될지]”를
-  - Slack 메시지 한 번(2,500자 이내)만 읽어도 빠르게 판단할 수 있게 돕는 것입니다.
+  - Slack 메시지 한 번(2,300자 이내)만 읽어도 빠르게 판단할 수 있게 돕는 것입니다.
 - 이를 위해 위의 모든 원칙을 항상 우선 적용하고,
   - [정확한 파일명 표기]
   - [문서 기반 사실만 전달]
   - [Slack 친화적·표 형식 텍스트 요약]
-  - [2,500자 이내, URL 미노출]
+  - [***2,300자 이내, URL 미노출***]
 을 철저하게 지키며 답변합니다.
 """
 
@@ -510,9 +510,7 @@ def find_download_links(sources: list[str]) -> list[tuple[str, str]]:
     return matches
 
 
-def format_slack_message(
-    answer: str, sources: list, question: str, download_links: list[tuple[str, str]] | None = None
-) -> dict:
+def format_slack_message(answer: str, sources: list, question: str) -> dict:
     """Slack 메시지 포맷팅 (Block Kit 사용)"""
     safe_question = _sanitize_text(question)
     safe_answer = _sanitize_text(answer)
@@ -550,25 +548,45 @@ def format_slack_message(
             }
         })
 
-    if download_links:
-        link_lines = []
-        for idx, (name, url) in enumerate(download_links[:5], start=1):
-            safe_name = _sanitize_text(name, default="파일명 미확인", limit=2000)
-            safe_url = url.strip()
-            link_lines.append(f"{idx}. {safe_name} - <{safe_url}|다운로드>")
-        link_text = "\n".join(link_lines)
-        blocks.append({
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*다운로드 링크:*\n{link_text}"
-            }
-        })
-
     return {
         "text": fallback_text[:2900],  # push safe fallback for notifications
         "blocks": blocks
     }
+
+
+def post_download_links(channel: str, thread_ts: str, sources: list[str]) -> None:
+    """Post an additional Slack comment with download links if available."""
+
+    link_entries = find_download_links(sources)
+    if not link_entries:
+        return
+
+    lines = []
+    for idx, (name, url) in enumerate(link_entries, start=1):
+        safe_name = _sanitize_text(name, default="파일명 미확인", limit=2000)
+        safe_url = url.strip()
+        lines.append(f"{idx}. {safe_name} - <{safe_url}|다운로드>")
+
+    text = "*관련 제안서 다운로드 링크*\n" + "\n".join(lines)
+    safe_text = _sanitize_text(text, default="관련 제안서 다운로드 링크")
+
+    try:
+        slack_client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text=safe_text,
+            blocks=[
+                {
+                    "type": "section",
+                    "text": {
+                        "type": "mrkdwn",
+                        "text": text
+                    }
+                }
+            ]
+        )
+    except SlackApiError as exc:
+        print(f"Slack 링크 메시지 오류: {exc.response.get('error', str(exc))}")
 
 
 def extract_query_from_mention(text: str) -> str:
@@ -639,15 +657,9 @@ async def slack_events(request: Request):
 
                 # 제안서 스토어 쿼리
                 answer, sources = query_proposal_store(question)
-                download_links = find_download_links(sources)
 
                 # 메시지 포맷팅
-                formatted_msg = format_slack_message(
-                    answer,
-                    sources,
-                    question,
-                    download_links=download_links
-                )
+                formatted_msg = format_slack_message(answer, sources, question)
 
                 # "처리 중" 메시지 삭제
                 slack_client.chat_delete(
@@ -661,6 +673,7 @@ async def slack_events(request: Request):
                     thread_ts=thread_ts,
                     **formatted_msg
                 )
+                post_download_links(channel, thread_ts, sources)
 
             except SlackApiError as e:
                 print(f"Slack API 오류: {e.response['error']}")
