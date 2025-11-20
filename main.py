@@ -510,7 +510,9 @@ def find_download_links(sources: list[str]) -> list[tuple[str, str]]:
     return matches
 
 
-def format_slack_message(answer: str, sources: list, question: str) -> dict:
+def format_slack_message(
+    answer: str, sources: list, question: str, download_links: list[tuple[str, str]] | None = None
+) -> dict:
     """Slack 메시지 포맷팅 (Block Kit 사용)"""
     safe_question = _sanitize_text(question)
     safe_answer = _sanitize_text(answer)
@@ -548,45 +550,25 @@ def format_slack_message(answer: str, sources: list, question: str) -> dict:
             }
         })
 
+    if download_links:
+        link_lines = []
+        for idx, (name, url) in enumerate(download_links[:5], start=1):
+            safe_name = _sanitize_text(name, default="파일명 미확인", limit=2000)
+            safe_url = url.strip()
+            link_lines.append(f"{idx}. {safe_name} - <{safe_url}|다운로드>")
+        link_text = "\n".join(link_lines)
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"*다운로드 링크:*\n{link_text}"
+            }
+        })
+
     return {
         "text": fallback_text[:2900],  # push safe fallback for notifications
         "blocks": blocks
     }
-
-
-def post_download_links(channel: str, thread_ts: str, sources: list[str]) -> None:
-    """Post an additional Slack comment with download links if available."""
-
-    link_entries = find_download_links(sources)
-    if not link_entries:
-        return
-
-    lines = []
-    for idx, (name, url) in enumerate(link_entries, start=1):
-        safe_name = _sanitize_text(name, default="파일명 미확인", limit=2000)
-        safe_url = url.strip()
-        lines.append(f"{idx}. {safe_name} - <{safe_url}|다운로드>")
-
-    text = "*관련 제안서 다운로드 링크*\n" + "\n".join(lines)
-    safe_text = _sanitize_text(text, default="관련 제안서 다운로드 링크")
-
-    try:
-        slack_client.chat_postMessage(
-            channel=channel,
-            thread_ts=thread_ts,
-            text=safe_text,
-            blocks=[
-                {
-                    "type": "section",
-                    "text": {
-                        "type": "mrkdwn",
-                        "text": text
-                    }
-                }
-            ]
-        )
-    except SlackApiError as exc:
-        print(f"Slack 링크 메시지 오류: {exc.response.get('error', str(exc))}")
 
 
 def extract_query_from_mention(text: str) -> str:
@@ -657,9 +639,15 @@ async def slack_events(request: Request):
 
                 # 제안서 스토어 쿼리
                 answer, sources = query_proposal_store(question)
+                download_links = find_download_links(sources)
 
                 # 메시지 포맷팅
-                formatted_msg = format_slack_message(answer, sources, question)
+                formatted_msg = format_slack_message(
+                    answer,
+                    sources,
+                    question,
+                    download_links=download_links
+                )
 
                 # "처리 중" 메시지 삭제
                 slack_client.chat_delete(
@@ -673,7 +661,6 @@ async def slack_events(request: Request):
                     thread_ts=thread_ts,
                     **formatted_msg
                 )
-                post_download_links(channel, thread_ts, sources)
 
             except SlackApiError as e:
                 print(f"Slack API 오류: {e.response['error']}")
